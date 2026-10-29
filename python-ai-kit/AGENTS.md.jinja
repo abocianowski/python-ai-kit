@@ -461,6 +461,8 @@ Rules:
 {% endif %}
 {% if "sentry" in plugins %}
 - Sentry disables automatic argument collection and local-variable capture. Preserve credential sanitisation before SDK serialisation/truncation and in final error, transaction, and breadcrumb hooks. It masks sensitive fields and recognised URL/token/assignment formats, not arbitrary unlabelled private text.
+- Filter complete Authorization values for every scheme, including Digest, and serialized or multiline lists. Preserve adjacent metadata when a quoted/list boundary is reliable; otherwise filter through message end.
+- Handle escaped quotes, backslashes, line breaks and malformed quoted secrets without leaving credential suffixes. Match free-text assignments with `:` or `=`, and whitespace only for known one- or two-dash secret flags; preserve ordinary messages such as `Invalid token signature`.
 {% endif %}
 - Use synthetic secrets for regression tests. Assert on process argv, stdout/stderr, and in-memory SDK envelopes; keep safe diagnostic metadata intact. Cover compound names such as `PGPASSWORD`, `SECRET_KEY`, `MASTER_KEY`, and `AWS_SECRET_ACCESS_KEY`.
 

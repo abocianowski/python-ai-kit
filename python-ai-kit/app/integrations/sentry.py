@@ -38,13 +38,25 @@ _URL_USERINFO = re.compile(
     re.IGNORECASE,
 )
 _BEARER_TOKEN = re.compile(r"\bBearer\s+[a-z0-9._~+/\-]+=*", re.IGNORECASE)
+_QUOTED_VALUE = r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
+_AUTH_HEADER_CREDENTIALS = re.compile(
+    rf"""(\bauthorization["']?\s*[:=]\s*)
+        (?:{_QUOTED_VALUE}(?=$|[\s,;}}\]])
+           |\[(?:{_QUOTED_VALUE}|[^\[\]"'])*\](?=$|[\s,;}}\]])
+           |.*$)""",
+    re.IGNORECASE | re.VERBOSE | re.DOTALL,
+)
+_SECRET_NAMES = (
+    r"(?:password|passwd|secret|token|api[_-]?key|credentials|authorization"
+    r"|secret[_-]?key|secret[_-]?access[_-]?key|master[_-]?key)"
+)
 _SECRET_ASSIGNMENT = re.compile(
-    r"""(?P<prefix>(?<![\w-])(?:--)?[a-z0-9_-]*
-        (?:password|passwd|secret|token|api[_-]?key|credentials|authorization
-           |secret[_-]?key|secret[_-]?access[_-]?key|master[_-]?key)
-        ["']?\s*(?:[:=]\s*|\s+))
-        (?:\[Filtered\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&'"}\]]+)""",
-    re.IGNORECASE | re.VERBOSE,
+    rf"""(?P<prefix>(?<![\w-])(?:
+            --?[a-z0-9_-]*{_SECRET_NAMES}["']?\s+
+            |[a-z0-9_-]*{_SECRET_NAMES}["']?\s*[:=]\s*
+        ))
+        (?:\[Filtered\]|{_QUOTED_VALUE}(?=$|[\s,;&}}\]])|["'].*$|[^\s,;&'"}}\]]+)""",
+    re.IGNORECASE | re.VERBOSE | re.DOTALL,
 )
 
 
@@ -89,17 +101,22 @@ class _CredentialScrubber(EventScrubber):
 
 
 def _is_sensitive_key(key: str) -> bool:
+    """Recognise normalised secret names without changing unrelated SDK schema keys"""
     normalized = re.sub(r"[^a-z0-9]", "", key.lower())
     return normalized in _SENSITIVE_KEYS or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
 def _sanitize_text(value: str) -> str:
+    """Filter credential-bearing text and preserve reliable quoted/list value boundaries"""
     value = _URL_USERINFO.sub(rf"\1{_FILTERED}@", value)
+    # Without a reliable quoted/list boundary, the remaining authorization text is sensitive.
+    value = _AUTH_HEADER_CREDENTIALS.sub(rf"\1{_FILTERED}", value)
     value = _BEARER_TOKEN.sub(f"Bearer {_FILTERED}", value)
     return _SECRET_ASSIGNMENT.sub(lambda match: f"{match['prefix']}{_FILTERED}", value)
 
 
 def _sanitize_value(value: object, *, depth: int = 0) -> object:
+    """Copy nested telemetry with sensitive values masked and recursion bounded"""
     # Raw breadcrumbs can be cyclic. Do not fail open or recurse without a bound.
     if depth >= 20:
         return _FILTERED
